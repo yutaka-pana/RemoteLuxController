@@ -6,8 +6,10 @@
 // SCL は analog 5 に接続してください
 // SDA は analog 4 に接続してください
 #include "TSL2561.h"
+#include <SPI.h>
+#include <Ethernet.h>
 
-#define VERSION "1.0.0"
+#define VERSION "1.1.0"
 
 //-- 出力設定
 //- PWM
@@ -26,9 +28,31 @@
 #define LUX_MAX 30000
 
 //-- IO定義
-#define SERIAL_EN true
-#define SERIAL_RATE 9600
+//- GPIO
 #define PWMPORT 3
+//- シリアル定義
+#define SERIAL_EN true
+#define SERIAL_RATE 230400
+//- Ethernetシールド
+byte mac_address[] = {
+  0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED
+};
+byte IP_address[] = {
+  192,168,1,110
+};
+byte dns_address[] = {
+  192,168,1,1
+};
+byte gateway_address[] = {
+  192,168,1,1
+};
+byte subnet[] = {
+  255,255,255,0
+};
+//IPAddress ip(192, 168, 1, 110);
+EthernetServer server(80);
+String pathname="";
+String query="";
 
 //-- センサ変数設定
 //- アドレス設定
@@ -139,6 +163,104 @@ void pwmOut_TX(int pwm){
   analogWrite(PWMPORT, pwm);
 }
 
+/// API処理：クエリーに対応する値があれば返す
+String getQuery(String command)
+{
+  if(query.indexOf(command + "=") > -1){
+    int num = query.indexOf(command + "=");
+    int start = num + command.length() + 1;
+    int end = query.indexOf("&", start);
+    if(end == -1){
+      end = query.length();
+    }
+    return query.substring(start, end);
+  }
+  return ""; 
+}
+
+///Ether受信モジュール
+String Ether_RX(){
+  String target;
+  EthernetClient client = server.available();
+  if(client){
+    boolean currentLineIsBlank = true;
+    boolean isGETLine = true;
+    String header = "";
+    String headerGET = "";
+    while(client.connected()){
+      //Serial.println("Ether: ClientAccess!");
+      if(client.available()){
+        //Serial.println("Ether: ClientHello!");
+        char c = client.read();
+        if(isGETLine){
+          if(c=='\n'){
+            isGETLine =false;
+            Serial.println(header);
+          }else{
+            header += String(c);
+          }
+        }
+        if (c == '\n' && currentLineIsBlank) {
+          headerGET = header.substring(header.indexOf(" ")+1, header.lastIndexOf(" "));
+          // favicon.ico対策
+          if(headerGET == "/favicon.ico"){
+            client.println("HTTP/1.1 204 OK");
+            client.println("Connection: close");
+            client.println();
+            break;
+          }
+          pathname = headerGET.substring(0, headerGET.indexOf("?"));
+          query = headerGET.indexOf("?") > -1?headerGET.substring(headerGET.indexOf("?")+1):"";
+          Serial.println("pathname=" + pathname + ", query=" + query);
+
+          // send a standard http response header
+          client.println("HTTP/1.1 200 OK");
+          client.println("Content-Type: text/html");
+          client.println("Connection: close");  // the connection will be closed after completion of the response
+          //client.println("Refresh: 5");  // refresh the page automatically every 5 sec
+          //client.println();
+          //client.println("<!DOCTYPE HTML>");
+          //client.println("<html>");
+          
+          // output the value of each analog input pin
+          //for (int analogChannel = 0; analogChannel < 6; analogChannel++) {
+          //  int sensorReading = analogRead(analogChannel);
+          //  client.print("analog input ");
+          //  client.print(analogChannel);
+          //  client.print(" is ");
+          //  client.print(sensorReading);
+          //  client.println("<br />");
+          //}
+          // ディレクトリやクエリーで分けてみたらいかが？提案用
+          //client.println("<a href='../abc/?a=123&b=456'>../abc/?a=123&b=456</a>");
+          //client.println("<br />");
+          // API ぽく使いたい時はディレクトリ分けしたら良いかも
+          if(pathname == "/cont/"){
+            target = getQuery("target");
+            if(target != ""){
+             Serial.println("target=" + target);
+            }
+          }
+//        client.println("<br />");
+//        client.println("pathname:" + pathname + ", query:" + query);
+//        client.println("</html>");
+          break;
+        }
+        if (c == '\n') {
+        // you're starting a new line
+          currentLineIsBlank = true;
+        } else if (c != '\r') {
+        // you've gotten a character on the current line
+          currentLineIsBlank = false;
+        }
+      }
+    }
+    delay(10);
+    client.stop();
+  }
+  return target;
+}
+
 ///シリアル受信モジュール
 String Serial_RX(){
   String data;
@@ -154,7 +276,7 @@ String Serial_RX(){
 }
 
 ///シリアル入力フィルタモジュール
-int serialIn_validation(String data){
+int rxDatavalidation_target(String data){
   int retVal = -1;
   int data_len = data.length();
 
@@ -167,21 +289,44 @@ int serialIn_validation(String data){
       retVal = get_lux;
     }
   }else{
-     Serial.println("!!!INVALID LENGTH!!!");
+     //Serial.println("!!!INVALID LENGTH!!!");
   }
   return retVal;
 }
 
 ///指示入力受信モジュール
 int target_RX(){
-  return serialIn_validation(Serial_RX());
+  //return  rxDatavalidation_target(Serial_RX());
+  return  rxDatavalidation_target(Ether_RX());
 }
 
 void setup() {
   //Setup Serial
   Serial.begin(SERIAL_RATE);
+  Serial.println("PowerActivated waiting 4 Ethernet StartUP!");
+  //Setup Ethernet
+  SPI.begin() ;
+  SPI.setBitOrder(MSBFIRST) ;
+  SPI.setClockDivider(SPI_CLOCK_DIV4) ;
+  SPI.setDataMode(SPI_MODE0) ;
+  Ethernet.begin(mac_address, IP_address, dns_address, gateway_address, subnet);
+  if (Ethernet.hardwareStatus() == EthernetNoHardware) {
+    Serial.println("Ethernet shield was not found.  Sorry, can't run without hardware. :(");
+    while (true) {
+      Serial.println("Reset in 5 seconds...");
+      delay(5000); // do nothing, no point running without Ethernet hardware
+      resetFunc();
+    }
+  }
+  if (Ethernet.linkStatus() == LinkOFF) {
+    Serial.println("Ethernet cable is not connected.");
+  }
+  server.begin();
+  Serial.print("WebServer is at ");
+  Serial.println(Ethernet.localIP());
+  
   //WelcomeMessage
-  Serial.println("RemoteLuxController Startup!");
+  Serial.println("RemoteLuxController Initializing!");
   Serial.print("Version.");
   Serial.println(VERSION); 
   Serial.println();
@@ -193,6 +338,7 @@ void setup() {
     Serial.println("lxSensor_Connect(): Found Sensor");
   }else{
     Serial.println("lxSensor_Connect(): No sensor?");
+    Serial.println("Reset in 5 seconds...");
     delay(5000);
     resetFunc();
   }
@@ -215,6 +361,7 @@ void loop() {
   intTemp = target_RX();
   if(intTemp >= 0){
     target = intTemp;
+    Serial.println("TARGET CHANGED!->" + intTemp);
   }else{
     target = target;
   }
