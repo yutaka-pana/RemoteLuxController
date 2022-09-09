@@ -19,7 +19,7 @@
 //- コントローラ
 #define CONT_MIN -1000
 #define CONT_MAX 1000
-#define GAIN_P 1
+#define GAIN_P 0.1
 #define GAIN_D 0
 #define GAIN_I 0
 #define LUX_MIN 10
@@ -76,9 +76,14 @@ double controller_PID(uint32_t sense, uint32_t sense_prev, uint32_t* diff_accum,
   cont_P = ((double)target - (double)sense) * GAIN_P;
   cont_D = 0;
   cont_I = 0;
-
-  Serial.print(",CONT_P: ");
+  Serial.print(", TARGET:");
+  Serial.print(target);
+  Serial.print(", CONT_P:");
   Serial.print(cont_P);
+  Serial.print(", CONT_D:");
+  Serial.print(cont_D);
+  Serial.print(", CONT_I:");
+  Serial.print(cont_I);
 
   cont_total = cont_P + cont_D + cont_I;
   if(cont_total > CONT_MAX){
@@ -88,6 +93,9 @@ double controller_PID(uint32_t sense, uint32_t sense_prev, uint32_t* diff_accum,
   }else{
     cont_total = cont_total;
   }
+
+  Serial.print(", CONT_OUT:");
+  Serial.print(cont_total);
 
   return cont_total;
 }
@@ -110,11 +118,11 @@ int pwmOut_getPwm(double order, double scale, int pwmPrev){
   int pwmFactor,pwmOut;
 
   pwmFactor = (int)(order * scale);
-  Serial.print(",PWM_F: ");
+  Serial.print(", PWM_F:");
   Serial.print(pwmFactor);
   
   pwmOut = pwmPrev + pwmFactor;
-  Serial.print(",PWM_OUT: ");
+  Serial.print(", PWM_OUT:");
   Serial.print(pwmOut);
   
   return pwmOut_filter(pwmOut);
@@ -152,12 +160,14 @@ int serialIn_validation(String data){
 
   if((data_len >= 1)&&(data_len <= 5)){
     int get_lux = data.toInt();
-    if(get_lux < LUX_MIN && get_lux > LUX_MAX){
-      Serial.print("INVALID TARGET");
+    if(get_lux < LUX_MIN || get_lux > LUX_MAX){
+      Serial.println("!!!INVALID VALUE!!!");
       retVal = -1;
     }else{
       retVal = get_lux;
     }
+  }else{
+     Serial.println("!!!INVALID LENGTH!!!");
   }
   return retVal;
 }
@@ -212,16 +222,16 @@ void loop() {
   uint32Temp = lxSensor_RX();
   uint32Temp = lxSensor_getLux(uint32Temp);
   uint32Temp = lxSensor_filter(uint32Temp);
-  Serial.print("LUX: ");
+  Serial.print("LUX:");
   Serial.print(uint32Temp);
 
   doubleTemp = controller_PID(uint32Temp, uint32Temp, &diffAccum, target);
-  Serial.print(",CONT: ");
+  Serial.print(", CONT:");
   Serial.print(doubleTemp);
   intTemp = pwmOut_getPwm(doubleTemp, ORDER2PWM, pwmPrev);
   pwmPrev = intTemp;
   pwmOut_TX(intTemp);
-  Serial.print(",PWM: ");
+  Serial.print(", PWM:");
   Serial.println(intTemp); 
 
   delay(100);
